@@ -1,0 +1,58 @@
+name: Build and Push to Amazon ECR
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    # Skip if the commit was authored by devin-ai-integration[bot]
+    if: github.actor != 'devin-ai-integration[bot]'
+
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: teste-tecnico-junior-picpay-joaocarv05
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::436820054705:role/GitHubActions-ContainerRegistry-Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR repository if it does not exist
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ env.ECR_REPOSITORY }}" \
+            --region "${{ env.AWS_REGION }}" 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: Build, tag, and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" .
+          docker tag "$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" \
+                     "$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
+          docker push "$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+          docker push "$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"

@@ -9,3 +9,4 @@ este é o picpay simplificado, um teste técnico backend de nivel junior que enc
 ### Tecnologias Utilizadas:
 - **Linguagem:** Java (Spring Boot)
 - **Banco de Dados:** H2
+- **Pipeline CI/CD** github actions e AWS ECR,EKS

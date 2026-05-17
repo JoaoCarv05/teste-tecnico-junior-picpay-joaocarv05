@@ -1,66 +1,57 @@
-name: Deploy to ECR
+name: Build and Push to ECR
 
 on:
-  workflow_dispatch:
-    inputs:
-      image_version:
-        description: 'Versão da imagem (ex: v1.0.0, 1.2.3)'
-        required: true
-        default: 'v1.0.0'
-        type: string
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  deploy:
-    name: Deploy to ECR
+  build-and-push:
     runs-on: ubuntu-latest
-    
-    # Permissões necessárias para OIDC
-    permissions:
-      id-token: write
-      contents: read
-    
+
+    # Skip runs triggered by the bot to prevent infinite loops
+    if: github.actor != 'devin-ai-integration[bot]'
+
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: teste-tecnico-junior-picpay
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: arn:aws:iam::436820054705:role/GitHubActions-ContainerRegistry-Role
-        aws-region: ${{ vars.AWS_REGION }}
-        role-session-name: GitHubActions-ECR-Push
-    
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-    
-    - name: Build, tag, and push image to Amazon ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}  # ← Usando variável do GitHub
-        IMAGE_VERSION: ${{ github.event.inputs.image_version }}
-        AWS_REGION: ${{ vars.AWS_REGION }}
-      run: |
-        echo "🚀 Building image with version: $IMAGE_VERSION"
-        echo "🌍 Using AWS Region: $AWS_REGION"
-        echo "📦 Using ECR Repository: $ECR_REPOSITORY"
-        
-        # Build da imagem Docker
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_VERSION .
-        
-        # Se não for 'latest', também taga como latest
-        if [ "$IMAGE_VERSION" != "latest" ]; then
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-        fi
-        
-        # Push da imagem para ECR
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_VERSION
-        
-        # Push do latest se não for a versão latest
-        if [ "$IMAGE_VERSION" != "latest" ]; then
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        fi
-        
-        echo "✅ Image pushed successfully!"
-        echo "📦 Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_VERSION"
-        echo "🌍 Region: $AWS_REGION"
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::436820054705:role/GitHubActions-ContainerRegistry-Role
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-ECR-Push
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR repository if it does not exist
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ env.ECR_REPOSITORY }}" \
+            --region "${{ env.AWS_REGION }}" 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: Build, tag, and push Docker image
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG .
+          docker tag $REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker push $REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+          docker push $REGISTRY/${{ env.ECR_REPOSITORY }}:latest
